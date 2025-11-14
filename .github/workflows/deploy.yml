@@ -13,18 +13,18 @@ jobs:
       SWA_NAME: wizlo-marketing-website
       RESOURCE_GROUP: wizlo-rg
       LOCATION: centralus
-      COMPANY_REPO_URL: "https://github.com/smarter-EMR/wizlo-marketing-website.git"
 
     steps:
-      - name: Checkout this pipeline repo
+      - name: Checkout pipeline repo
         uses: actions/checkout@v4
 
-      - name: Clone repo
-        run: |
-            git clone https://$GITHUB_USERNAME:$MY_PAT@github.com/smarter-EMR/wizlo-marketing-website.git repo
-            env:
-            GITHUB_USERNAME: syedmahmoodali-techdome
-            MY_PAT: ${{ secrets.GH_PAT }}
+      - name: Checkout marketing website (private repo)
+        uses: actions/checkout@v4
+        with:
+          repository: smarter-EMR/wizlo-marketing-website
+          token: ${{ secrets.GH_PAT }}
+          ref: main
+          path: repo
 
       - name: Login to Azure
         uses: azure/login@v2
@@ -97,5 +97,4 @@ jobs:
           output_location: "repo/.next"
 
       - name: Print deployed URL
-        run: |
-          echo "Deployed URL: ${{ steps.swa.outputs.SWA_URL }}"
+        run: echo "🌍 Deployed URL: ${{ steps.swa.outputs.SWA_URL }}"

@@ -1,16 +1,16 @@
-name: Create & Deploy Azure Static Web App
- 
+name: Deploy Next.js to Azure Web App
+
 on:
   workflow_dispatch:
   push:
     branches: ["main"]
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     env:
-      SWA_NAME: wizlo-marketing-website
+      WEBAPP_NAME: wizlo-marketing-webapp
       RESOURCE_GROUP: wizlo-rg
       LOCATION: centralus
 
@@ -26,42 +26,52 @@ jobs:
           ref: main
           path: repo
 
-      - name: Login to Azure
+      # Login to Azure
+      - name: Azure Login
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Install Azure SWA CLI
-        run: az extension add --name staticwebapp --allow-preview true
-
-      - name: Create resource group
+      # Create RG if not exists
+      - name: Create Resource Group
         run: |
           az group create \
             --name $RESOURCE_GROUP \
             --location $LOCATION
 
-      - name: Create Static Web App (ignore errors)
-        id: swa
+      # Create Web App if not exists
+      - name: Create Web App if not exists
         run: |
-          set +e
-          echo "Attempting to create Static Web App..."
-          az staticwebapp create \
-            --name $SWA_NAME \
+          if ! az webapp show --name $WEBAPP_NAME --resource-group $RESOURCE_GROUP &> /dev/null; then
+            echo "Web App does not exist. Creating..."
+            az appservice plan create \
+              --name "${WEBAPP_NAME}-plan" \
+              --resource-group $RESOURCE_GROUP \
+              --sku B1 \
+              --is-linux
+
+            az webapp create \
+              --resource-group $RESOURCE_GROUP \
+              --plan "${WEBAPP_NAME}-plan" \
+              --name $WEBAPP_NAME \
+              --runtime "NODE|20-lts"
+          else
+            echo "Web App already exists. Skipping create."
+          fi
+
+      # Set Node version for the Web App
+      - name: Configure Web App runtime
+        run: |
+          az webapp config set \
             --resource-group $RESOURCE_GROUP \
-            --location $LOCATION \
-            --sku Standard || true
+            --name $WEBAPP_NAME \
+            --linux-fx-version "NODE|20-lts"
 
-          HOST=$(az staticwebapp show \
-            --name $SWA_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --query "defaultHostname" -o tsv)
-
-          echo "SWA_URL=https://$HOST" >> $GITHUB_OUTPUT
-
-      - name: Setup Node (Next.js 16 requirement)
+      # Build Next.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20.10.0'
+          node-version: "20.x"
 
       - name: Install dependencies
         run: |
@@ -73,26 +83,18 @@ jobs:
           cd repo
           npm run build
 
-      - name: Get deployment token
-        id: token
+      - name: Archive production build
         run: |
-          TOKEN=$(az staticwebapp secrets list \
-            --name $SWA_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --query "properties.apiKey" -o tsv)
-          echo "TOKEN=$TOKEN" >> $GITHUB_OUTPUT
+          cd repo
+          zip -r ../app.zip .
 
-      - name: Deploy to Azure SWA (skip Oryx build)
-        uses: Azure/static-web-apps-deploy@v1
+      # Deploy to Azure Web App
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v2
         with:
-          azure_static_web_apps_api_token: ${{ steps.token.outputs.TOKEN }}
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          action: "upload"
-          app_location: "repo"
-          output_location: ".next"
-          skip_app_build: true
-          is_static_export: true
+          app-name: ${{ env.WEBAPP_NAME }}
+          package: app.zip
 
-      - name: Print deployed URL
+      - name: Print Web App URL
         run: |
-          echo "Deployed URL: ${{ steps.swa.outputs.SWA_URL }}"
+          echo "Deployed: https://${WEBAPP_NAME}.azurewebsites.net"

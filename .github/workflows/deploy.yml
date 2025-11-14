@@ -1,5 +1,5 @@
 name: Create & Deploy Azure Static Web App
-
+ 
 on:
   workflow_dispatch:
   push:

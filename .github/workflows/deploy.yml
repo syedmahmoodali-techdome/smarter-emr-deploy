@@ -32,7 +32,7 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Install Azure SWA CLI
-        run: az extension add --name staticwebapp
+        run: az extension add --name staticwebapp --allow-preview true
 
       - name: Create resource group
         run: |
@@ -89,8 +89,8 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: "upload"
           app_location: "repo"
-          output_location: "repo/.next"
+          output_location: ".next"
 
-      - name: Print deployed URL 
-        run: | 
-         echo "Deployed URL: ${{ steps.swa.outputs.SWA_URL }}"
+      - name: Print deployed URL
+        run: |
+          echo "Deployed URL: ${{ steps.swa.outputs.SWA_URL }}"

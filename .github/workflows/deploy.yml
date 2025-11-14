@@ -1,6 +1,6 @@
 name: Create & Deploy Azure Static Web App
- 
-on: 
+
+on:
   workflow_dispatch:
   push:
     branches: ["main"]
@@ -31,9 +31,6 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Register provider
-        run: az provider register --namespace Microsoft.Web --wait
-
       - name: Install Azure SWA CLI
         run: az extension add --name staticwebapp
 
@@ -43,26 +40,24 @@ jobs:
             --name $RESOURCE_GROUP \
             --location $LOCATION
 
-      - name: Create Static Web App (idempotent)
+      - name: Create Static Web App (ignore errors if exists)
         id: swa
         run: |
-          EXISTS=$(az staticwebapp list --query "[?name=='$SWA_NAME'] | length(@)")
+          set +e
+          echo "Attempting to create Static Web App..."
+          CREATE_OUTPUT=$(az staticwebapp create \
+            --name $SWA_NAME \
+            --resource-group $RESOURCE_GROUP \
+            --location $LOCATION \
+            --sku Free 2>&1)
 
-          if [ "$EXISTS" -eq 0 ]; then
-            echo "Creating Static Web App..."
-            HOST=$(az staticwebapp create \
-              --name $SWA_NAME \
-              --resource-group $RESOURCE_GROUP \
-              --location $LOCATION \
-              --sku Free \
-              --query "defaultHostname" -o tsv)
-          else
-            echo "Static Web App already exists"
-            HOST=$(az staticwebapp show \
-              --name $SWA_NAME \
-              --resource-group $RESOURCE_GROUP \
-              --query "defaultHostname" -o tsv)
-          fi
+          echo "$CREATE_OUTPUT"
+
+          # Get hostname (works even if app already exists)
+          HOST=$(az staticwebapp show \
+            --name $SWA_NAME \
+            --resource-group $RESOURCE_GROUP \
+            --query "defaultHostname" -o tsv)
 
           echo "SWA_URL=https://$HOST" >> $GITHUB_OUTPUT
 

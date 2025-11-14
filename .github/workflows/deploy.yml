@@ -1,0 +1,100 @@
+name: Create & Deploy Azure Static Web App
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      SWA_NAME: wizlo-marketing-website
+      RESOURCE_GROUP: wizlo-rg
+      LOCATION: centralus
+      COMPANY_REPO_URL: "https://github.com/smarter-EMR/wizlo-marketing-website.git"
+
+    steps:
+      - name: Checkout this pipeline repo
+        uses: actions/checkout@v4
+
+      - name: Clone private company repo using your PAT
+        run: |
+          git clone https://${{ secrets.GITHUB_PAT }}@github.com/smarter-EMR/wizlo-marketing-website.git repo
+          echo "Cloned wizlo-marketing-website"
+          ls -al repo
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Install Azure SWA CLI
+        run: az extension add --name staticwebapp
+
+      - name: Create resource group
+        run: |
+          az group create \
+            --name $RESOURCE_GROUP \
+            --location $LOCATION
+
+      - name: Create Static Web App (idempotent)
+        id: swa
+        run: |
+          EXISTS=$(az staticwebapp list --query "[?name=='$SWA_NAME'] | length(@)")
+
+          if [ "$EXISTS" -eq 0 ]; then
+            echo "Creating Static Web App..."
+            HOST=$(az staticwebapp create \
+              --name $SWA_NAME \
+              --resource-group $RESOURCE_GROUP \
+              --location $LOCATION \
+              --sku Free \
+              --query "defaultHostname" -o tsv)
+          else
+            echo "Static Web App already exists"
+            HOST=$(az staticwebapp show \
+              --name $SWA_NAME \
+              --resource-group $RESOURCE_GROUP \
+              --query "defaultHostname" -o tsv)
+          fi
+
+          echo "SWA_URL=https://$HOST" >> $GITHUB_OUTPUT
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: |
+          cd repo
+          npm ci
+
+      - name: Build Next.js
+        run: |
+          cd repo
+          npm run build
+
+      - name: Get deployment token
+        id: token
+        run: |
+          TOKEN=$(az staticwebapp secrets list \
+            --name $SWA_NAME \
+            --resource-group $RESOURCE_GROUP \
+            --query "properties.apiKey" -o tsv)
+          echo "TOKEN=$TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Deploy to Azure SWA
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ steps.token.outputs.TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: "upload"
+          app_location: "repo"
+          output_location: "repo/.next"
+
+      - name: Print deployed URL
+        run: |
+          echo "Deployed URL: ${{ steps.swa.outputs.SWA_URL }}"

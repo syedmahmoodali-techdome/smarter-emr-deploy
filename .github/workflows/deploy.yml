@@ -1,5 +1,5 @@
 name: Create & Deploy Azure Static Web App
-
+ 
 on:
   workflow_dispatch:
   push:
@@ -40,20 +40,17 @@ jobs:
             --name $RESOURCE_GROUP \
             --location $LOCATION
 
-      - name: Create Static Web App (ignore errors if exists)
+      - name: Create Static Web App (ignore errors)
         id: swa
         run: |
           set +e
           echo "Attempting to create Static Web App..."
-          CREATE_OUTPUT=$(az staticwebapp create \
+          az staticwebapp create \
             --name $SWA_NAME \
             --resource-group $RESOURCE_GROUP \
             --location $LOCATION \
-            --sku Free 2>&1)
+            --sku Standard || true
 
-          echo "$CREATE_OUTPUT"
-
-          # Get hostname (works even if app already exists)
           HOST=$(az staticwebapp show \
             --name $SWA_NAME \
             --resource-group $RESOURCE_GROUP \
@@ -61,10 +58,10 @@ jobs:
 
           echo "SWA_URL=https://$HOST" >> $GITHUB_OUTPUT
 
-      - name: Setup Node
+      - name: Setup Node (Next.js 16 requirement)
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: '20.10.0'
 
       - name: Install dependencies
         run: |

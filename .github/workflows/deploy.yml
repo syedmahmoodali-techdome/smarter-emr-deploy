@@ -1,24 +1,30 @@
-name: Deploy Next.js to Azure Web App
+name: Build Docker image -> ACR -> Deploy to Azure Web App (Container)
 
 on:
   workflow_dispatch:
   push:
     branches: ["main"]
 
+env:
+  # change these if you want different names
+  ACR_NAME: wizloacr${{ github.run_id }}    # unique-ish ACR name per run (will be lowercased by az)
+  ACR_SKU: Basic
+  WEBAPP_NAME: wizlo-marketing-webapp
+  RESOURCE_GROUP: wizlo-rg
+  LOCATION: centralus
+  IMAGE_NAME: wizlo-marketing-webapp
+  IMAGE_TAG: ${{ github.run_id }}
+  APP_PORT: 8080
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-
-    env:
-      WEBAPP_NAME: wizlo-marketing-webapp
-      RESOURCE_GROUP: wizlo-rg
-      LOCATION: centralus
 
     steps:
       - name: Checkout pipeline repo
         uses: actions/checkout@v4
 
-      - name: Checkout marketing website (private repo)
+      - name: Checkout target (company) repo
         uses: actions/checkout@v4
         with:
           repository: smarter-EMR/wizlo-marketing-website
@@ -26,75 +32,139 @@ jobs:
           ref: main
           path: repo
 
-      # Login to Azure
-      - name: Azure Login
+      - name: Login to Azure
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # Create RG if not exists
-      - name: Create Resource Group
+      - name: Create resource group (idempotent)
         run: |
-          az group create \
-            --name $RESOURCE_GROUP \
-            --location $LOCATION
+          az group create --name $RESOURCE_GROUP --location $LOCATION
 
-      # Create Web App if not exists
-      - name: Create Web App if not exists
+      - name: Create Azure Container Registry (if not exists)
+        id: acr_create
         run: |
-          if ! az webapp show --name $WEBAPP_NAME --resource-group $RESOURCE_GROUP &> /dev/null; then
-            echo "Web App does not exist. Creating..."
-            az appservice plan create \
-              --name "${WEBAPP_NAME}-plan" \
-              --resource-group $RESOURCE_GROUP \
-              --sku B1 \
-              --is-linux
+          set -e
+          # ensure ACR name is lowercase and valid
+          ACR_NAME_LOWER=$(echo "${ACR_NAME}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+          echo "ACR_NAME_LOWER=$ACR_NAME_LOWER" >> $GITHUB_OUTPUT
 
-            az webapp create \
-              --resource-group $RESOURCE_GROUP \
-              --plan "${WEBAPP_NAME}-plan" \
-              --name $WEBAPP_NAME \
-              --runtime "NODE|20-lts"
+          # create ACR if not exists
+          if az acr show --name "$ACR_NAME_LOWER" --resource-group "$RESOURCE_GROUP" &> /dev/null; then
+            echo "ACR exists: $ACR_NAME_LOWER"
           else
-            echo "Web App already exists. Skipping create."
+            echo "Creating ACR: $ACR_NAME_LOWER"
+            az acr create --name "$ACR_NAME_LOWER" --resource-group "$RESOURCE_GROUP" --sku $ACR_SKU --location "$LOCATION" --admin-enabled true
           fi
 
-      # Set Node version for the Web App
-      - name: Configure Web App runtime
+          ACR_LOGIN_SERVER=$(az acr show --name "$ACR_NAME_LOWER" --resource-group "$RESOURCE_GROUP" --query loginServer -o tsv)
+          echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
+
+      - name: Create Dockerfile for container (in repo)
         run: |
-          az webapp config set \
-            --resource-group $RESOURCE_GROUP \
+          cat > repo/Dockerfile <<'DOCKERFILE'
+          # Multi-stage build for Next.js (no source changes required)
+          FROM node:20 AS builder
+          WORKDIR /app
+          COPY package*.json ./
+          RUN npm ci --legacy-peer-deps
+          COPY . .
+          RUN npm run build
+
+          FROM node:20-slim AS runner
+          WORKDIR /app
+          ENV NODE_ENV=production
+          COPY --from=builder /app ./
+          # Use a predictable port for Azure Web App container
+          ENV PORT=8080
+          EXPOSE 8080
+          # Start the Next.js production server (no repo code changes required)
+          CMD ["npx","next","start","-p","8080"]
+          DOCKERFILE
+          ls -la repo/Dockerfile
+
+      - name: Build & push image to ACR using az acr build
+        id: acr_build
+        run: |
+          set -e
+          ACR_LOGIN_SERVER=${{ steps.acr_create.outputs.ACR_LOGIN_SERVER }}
+          IMAGE_FULL="${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${IMAGE_TAG}"
+          echo "Building image ${IMAGE_FULL} with az acr build (this builds in the cloud)"
+          az acr build --registry ${ACR_LOGIN_SERVER%%.*} --image "${IMAGE_NAME}:${IMAGE_TAG}" ./repo
+
+          echo "IMAGE_FULL=${IMAGE_FULL}" >> $GITHUB_OUTPUT
+
+      - name: Get ACR credentials
+        id: acr_creds
+        run: |
+          set -e
+          ACR_LOGIN_SERVER=${{ steps.acr_create.outputs.ACR_LOGIN_SERVER }}
+          ACR_NAME=$(echo "$ACR_LOGIN_SERVER" | cut -d. -f1)
+          CRED_JSON=$(az acr credential show --name "$ACR_NAME" --resource-group "$RESOURCE_GROUP" -o json)
+          USERNAME=$(echo "$CRED_JSON" | jq -r .username)
+          PASSWORD=$(echo "$CRED_JSON" | jq -r .passwords[0].value)
+          echo "ACR_NAME=$ACR_NAME" >> $GITHUB_OUTPUT
+          echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
+          echo "ACR_USER=$USERNAME" >> $GITHUB_OUTPUT
+          echo "ACR_PASS=$PASSWORD" >> $GITHUB_OUTPUT
+
+      - name: Create App Service Plan (Linux) if not exists
+        run: |
+          if az appservice plan show --name "${WEBAPP_NAME}-plan" --resource-group $RESOURCE_GROUP &> /dev/null; then
+            echo "App Service plan exists"
+          else
+            az appservice plan create --name "${WEBAPP_NAME}-plan" --resource-group $RESOURCE_GROUP --sku B1 --is-linux
+          fi
+
+      - name: Create Web App for Containers if not exists
+        run: |
+          if az webapp show --name $WEBAPP_NAME --resource-group $RESOURCE_GROUP &> /dev/null; then
+            echo "Web App exists"
+          else
+            az webapp create --resource-group $RESOURCE_GROUP --plan "${WEBAPP_NAME}-plan" --name $WEBAPP_NAME --deployment-container-image-name "placeholder"
+          fi
+
+      - name: Configure Web App to use container from ACR
+        run: |
+          set -e
+          ACR_LOGIN_SERVER=${{ steps.acr_create.outputs.ACR_LOGIN_SERVER }}
+          ACR_USER=${{ steps.acr_creds.outputs.ACR_USER }}
+          ACR_PASS=${{ steps.acr_creds.outputs.ACR_PASS }}
+          IMAGE_FULL="${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${IMAGE_TAG}"
+
+          # Configure container settings and registry credentials
+          az webapp config container set \
             --name $WEBAPP_NAME \
-            --linux-fx-version "NODE|20-lts"
+            --resource-group $RESOURCE_GROUP \
+            --docker-custom-image-name "$IMAGE_FULL" \
+            --docker-registry-server-url "https://$ACR_LOGIN_SERVER" \
+            --docker-registry-server-user "$ACR_USER" \
+            --docker-registry-server-password "$ACR_PASS"
 
-      # Build Next.js
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20.x"
+          # Ensure the app knows which port the container will listen on
+          az webapp config appsettings set \
+            --name $WEBAPP_NAME \
+            --resource-group $RESOURCE_GROUP \
+            --settings "WEBSITE_PORT=${APP_PORT}"
 
-      - name: Install dependencies
+          # Restart to pick up new container
+          az webapp restart --name $WEBAPP_NAME --resource-group $RESOURCE_GROUP
+
+      - name: Wait for the site to become healthy
         run: |
-          cd repo
-          npm ci
+          set -e
+          URL="https://${WEBAPP_NAME}.azurewebsites.net"
+          echo "Waiting for $URL ... (60s timeout)"
+          for i in {1..30}; do
+            status=$(curl -s -o /dev/null -w "%{http_code}" $URL || echo "000")
+            echo "Attempt $i: HTTP $status"
+            if [ "$status" != "000" ]; then
+              echo "Site responded with status $status"
+              break
+            fi
+            sleep 2
+          done
 
-      - name: Build Next.js
+      - name: Print final URL
         run: |
-          cd repo
-          npm run build
-
-      - name: Archive production build
-        run: |
-          cd repo
-          zip -r ../app.zip .
-
-      # Deploy to Azure Web App
-      - name: Deploy to Azure Web App
-        uses: azure/webapps-deploy@v2
-        with:
-          app-name: ${{ env.WEBAPP_NAME }}
-          package: app.zip
-
-      - name: Print Web App URL
-        run: |
-          echo "Deployed: https://${WEBAPP_NAME}.azurewebsites.net"
+          echo "🚀 App deployed at: https://${WEBAPP_NAME}.azurewebsites.net"

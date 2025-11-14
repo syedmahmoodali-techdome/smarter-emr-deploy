@@ -96,5 +96,6 @@ jobs:
           app_location: "repo"
           output_location: "repo/.next"
 
-      - name: Print deployed URL
-        run: echo "🌍 Deployed URL: ${{ steps.swa.outputs.SWA_URL }}"
+      - name: Print deployed URL 
+        run: | 
+         echo "Deployed URL: ${{ steps.swa.outputs.SWA_URL }}"

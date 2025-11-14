@@ -19,11 +19,12 @@ jobs:
       - name: Checkout this pipeline repo
         uses: actions/checkout@v4
 
-      - name: Clone private company repo using your PAT
+      - name: Clone repo
         run: |
-          git clone https://${{ secrets.GITHUB_PAT }}@github.com/smarter-EMR/wizlo-marketing-website.git repo
-          echo "Cloned wizlo-marketing-website"
-          ls -al repo
+            git clone https://$GITHUB_USERNAME:$MY_PAT@github.com/smarter-EMR/wizlo-marketing-website.git repo
+            env:
+            GITHUB_USERNAME: syedmahmoodali-techdome
+            MY_PAT: ${{ secrets.GH_PAT }}
 
       - name: Login to Azure
         uses: azure/login@v2

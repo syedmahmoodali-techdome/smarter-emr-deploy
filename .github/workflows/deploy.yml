@@ -82,7 +82,7 @@ jobs:
             --query "properties.apiKey" -o tsv)
           echo "TOKEN=$TOKEN" >> $GITHUB_OUTPUT
 
-      - name: Deploy to Azure SWA
+      - name: Deploy to Azure SWA (skip Oryx build)
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ steps.token.outputs.TOKEN }}
@@ -90,6 +90,8 @@ jobs:
           action: "upload"
           app_location: "repo"
           output_location: ".next"
+          skip_app_build: true
+          is_static_export: true
 
       - name: Print deployed URL
         run: |

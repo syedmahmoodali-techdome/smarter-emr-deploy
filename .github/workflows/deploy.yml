@@ -7,10 +7,11 @@ on:
 
 env:
   # change these if you want different names
-  ACR_NAME: wizloacr${{ github.run_id }}    # unique-ish ACR name per run (will be lowercased by az)
+  ACR_NAME: WizloMarketingWebsiteACR
+  ACR_LOGIN_SERVER: wizlomarketingwebsiteacr.azurecr.io 
   ACR_SKU: Basic
   WEBAPP_NAME: wizlo-marketing-webapp
-  RESOURCE_GROUP: wizlo-rg
+  RESOURCE_GROUP: Wizlo-Marketing-Website-RG
   LOCATION: centralus
   IMAGE_NAME: wizlo-marketing-webapp
   IMAGE_TAG: ${{ github.run_id }}
@@ -41,25 +42,6 @@ jobs:
         run: |
           az group create --name $RESOURCE_GROUP --location $LOCATION
 
-      - name: Create Azure Container Registry (if not exists)
-        id: acr_create
-        run: |
-          set -e
-          # ensure ACR name is lowercase and valid
-          ACR_NAME_LOWER=$(echo "${ACR_NAME}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
-          echo "ACR_NAME_LOWER=$ACR_NAME_LOWER" >> $GITHUB_OUTPUT
-
-          # create ACR if not exists
-          if az acr show --name "$ACR_NAME_LOWER" --resource-group "$RESOURCE_GROUP" &> /dev/null; then
-            echo "ACR exists: $ACR_NAME_LOWER"
-          else
-            echo "Creating ACR: $ACR_NAME_LOWER"
-            az acr create --name "$ACR_NAME_LOWER" --resource-group "$RESOURCE_GROUP" --sku $ACR_SKU --location "$LOCATION" --admin-enabled true
-          fi
-
-          ACR_LOGIN_SERVER=$(az acr show --name "$ACR_NAME_LOWER" --resource-group "$RESOURCE_GROUP" --query loginServer -o tsv)
-          echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
-
       - name: Create Dockerfile for container (in repo)
         run: |
           cat > repo/Dockerfile <<'DOCKERFILE'
@@ -83,30 +65,20 @@ jobs:
           DOCKERFILE
           ls -la repo/Dockerfile
 
-      - name: Build & push image to ACR using az acr build
-        id: acr_build
+      - name: Login to ACR
         run: |
-          set -e
-          ACR_LOGIN_SERVER=${{ steps.acr_create.outputs.ACR_LOGIN_SERVER }}
-          IMAGE_FULL="${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${IMAGE_TAG}"
-          echo "Building image ${IMAGE_FULL} with az acr build (this builds in the cloud)"
-          az acr build --registry ${ACR_LOGIN_SERVER%%.*} --image "${IMAGE_NAME}:${IMAGE_TAG}" ./repo
+          az acr login --name $ACR_NAME
 
-          echo "IMAGE_FULL=${IMAGE_FULL}" >> $GITHUB_OUTPUT
-
-      - name: Get ACR credentials
-        id: acr_creds
+      - name: Build & push image to ACR
         run: |
-          set -e
-          ACR_LOGIN_SERVER=${{ steps.acr_create.outputs.ACR_LOGIN_SERVER }}
-          ACR_NAME=$(echo "$ACR_LOGIN_SERVER" | cut -d. -f1)
-          CRED_JSON=$(az acr credential show --name "$ACR_NAME" --resource-group "$RESOURCE_GROUP" -o json)
-          USERNAME=$(echo "$CRED_JSON" | jq -r .username)
-          PASSWORD=$(echo "$CRED_JSON" | jq -r .passwords[0].value)
-          echo "ACR_NAME=$ACR_NAME" >> $GITHUB_OUTPUT
-          echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
-          echo "ACR_USER=$USERNAME" >> $GITHUB_OUTPUT
-          echo "ACR_PASS=$PASSWORD" >> $GITHUB_OUTPUT
+          IMAGE_FULL="$ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG"
+          echo "Building $IMAGE_FULL"
+
+          docker build -t $IMAGE_FULL ./repo
+          docker push $IMAGE_FULL
+
+          echo "IMAGE_FULL=$IMAGE_FULL" >> $GITHUB_OUTPUT
+
 
       - name: Create App Service Plan (Linux) if not exists
         run: |
@@ -127,9 +99,7 @@ jobs:
       - name: Configure Web App to use container from ACR
         run: |
           set -e
-          ACR_LOGIN_SERVER=${{ steps.acr_create.outputs.ACR_LOGIN_SERVER }}
-          ACR_USER=${{ steps.acr_creds.outputs.ACR_USER }}
-          ACR_PASS=${{ steps.acr_creds.outputs.ACR_PASS }}
+          ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER
           IMAGE_FULL="${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${IMAGE_TAG}"
 
           # Configure container settings and registry credentials
@@ -137,9 +107,8 @@ jobs:
             --name $WEBAPP_NAME \
             --resource-group $RESOURCE_GROUP \
             --docker-custom-image-name "$IMAGE_FULL" \
-            --docker-registry-server-url "https://$ACR_LOGIN_SERVER" \
-            --docker-registry-server-user "$ACR_USER" \
-            --docker-registry-server-password "$ACR_PASS"
+            --docker-registry-server-url "https://$ACR_LOGIN_SERVER"
+
 
           # Ensure the app knows which port the container will listen on
           az webapp config appsettings set \

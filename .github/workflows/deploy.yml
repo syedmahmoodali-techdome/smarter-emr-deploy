@@ -13,7 +13,7 @@ env:
   WEBAPP_NAME: wizlo-marketing-webapp
   RESOURCE_GROUP: Wizlo-Marketing-Website-RG
   LOCATION: centralus
-  IMAGE_NAME: wizlo-marketing-webapp
+  IMAGE_NAME: wizlo-marketing-webapp-test
   IMAGE_TAG: ${{ github.run_id }}
   APP_PORT: 8080
 

@@ -11,7 +11,7 @@ env:
   ACR_LOGIN_SERVER: wizlomarketingwebsiteacr.azurecr.io 
   ACR_SKU: Basic
   WEBAPP_NAME: wizlo-marketing-webapp
-  RESOURCE_GROUP: Wizlo-Marketing-Website-RG
+  RESOURCE_GROUP: wizlo-rg
   LOCATION: centralus
   IMAGE_NAME: wizlo-marketing-webapp-test
   IMAGE_TAG: ${{ github.run_id }}

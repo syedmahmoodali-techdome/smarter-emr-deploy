@@ -99,25 +99,28 @@ jobs:
       - name: Configure Web App to use container from ACR
         run: |
           set -e
-          ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER
+
           IMAGE_FULL="${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${IMAGE_TAG}"
 
-          # Configure container settings and registry credentials
+          # Get ACR credentials
+          ACR_USER=$(az acr credential show --name $ACR_NAME --resource-group $RESOURCE_GROUP --query "username" -o tsv)
+          ACR_PASS=$(az acr credential show --name $ACR_NAME --resource-group $RESOURCE_GROUP --query "passwords[0].value" -o tsv)
+
+          # Configure Web App with new (non-deprecated) flags
           az webapp config container set \
             --name $WEBAPP_NAME \
             --resource-group $RESOURCE_GROUP \
-            --docker-custom-image-name "$IMAGE_FULL" \
-            --docker-registry-server-url "https://$ACR_LOGIN_SERVER"
+            --container-image-name "$IMAGE_FULL" \
+            --container-registry-url "https://$ACR_LOGIN_SERVER" \
+            --container-registry-user "$ACR_USER" \
+            --container-registry-password "$ACR_PASS"
 
-
-          # Ensure the app knows which port the container will listen on
+          # Set port
           az webapp config appsettings set \
             --name $WEBAPP_NAME \
             --resource-group $RESOURCE_GROUP \
             --settings "WEBSITE_PORT=${APP_PORT}"
-
-          # Restart to pick up new container
-          az webapp restart --name $WEBAPP_NAME --resource-group $RESOURCE_GROUP
+                az webapp restart --name $WEBAPP_NAME --resource-group $RESOURCE_GROUP
 
       - name: Wait for the site to become healthy
         run: |

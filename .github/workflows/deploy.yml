@@ -10,7 +10,7 @@ env:
   ACR_NAME: WizloMarketingWebsiteACR
   ACR_LOGIN_SERVER: wizlomarketingwebsiteacr.azurecr.io 
   ACR_SKU: Basic
-  WEBAPP_NAME: wizlo-marketing-webapp
+  WEBAPP_NAME: wizlo-marketing-webapp-testing
   RESOURCE_GROUP: wizlo-rg
   LOCATION: centralus
   IMAGE_NAME: wizlo-marketing-webapp-test
@@ -42,28 +42,28 @@ jobs:
         run: |
           az group create --name $RESOURCE_GROUP --location $LOCATION
 
-      - name: Create Dockerfile for container (in repo)
-        run: |
-          cat > repo/Dockerfile <<'DOCKERFILE'
-          # Multi-stage build for Next.js (no source changes required)
-          FROM node:20 AS builder
-          WORKDIR /app
-          COPY package*.json ./
-          RUN npm ci --legacy-peer-deps
-          COPY . .
-          RUN npm run build
+      # - name: Create Dockerfile for container (in repo)
+      #   run: |
+      #     cat > repo/Dockerfile <<'DOCKERFILE'
+      #     # Multi-stage build for Next.js (no source changes required)
+      #     FROM node:20 AS builder
+      #     WORKDIR /app
+      #     COPY package*.json ./
+      #     RUN npm ci --legacy-peer-deps
+      #     COPY . .
+      #     RUN npm run build
 
-          FROM node:20-slim AS runner
-          WORKDIR /app
-          ENV NODE_ENV=production
-          COPY --from=builder /app ./
-          # Use a predictable port for Azure Web App container
-          ENV PORT=8080
-          EXPOSE 8080
-          # Start the Next.js production server (no repo code changes required)
-          CMD ["npx","next","start","-p","8080"]
-          DOCKERFILE
-          ls -la repo/Dockerfile
+      #     FROM node:20-slim AS runner
+      #     WORKDIR /app
+      #     ENV NODE_ENV=production
+      #     COPY --from=builder /app ./
+      #     # Use a predictable port for Azure Web App container
+      #     ENV PORT=8080
+      #     EXPOSE 8080
+      #     # Start the Next.js production server (no repo code changes required)
+      #     CMD ["npx","next","start","-p","8080"]
+      #     DOCKERFILE
+      #     ls -la repo/Dockerfile
 
       - name: Login to ACR
         run: |
